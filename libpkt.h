@@ -285,7 +285,7 @@ public:                                                                         
     binds->method_set_##m_ts = &m_class::set_##m_prop;                                                                                  \
     binds->method_get_##m_ts = &m_class::get_##m_prop;                                                                                  \
     _prop_binds.push_back(binds);                                                                                                       \
-    ByteProcessor bp = ByteProcessor<m_class>(binds);                                                                                   \
+    ByteProcessor<m_class> bp(binds);                                                                                                   \
     _byte_procs[_bound_slot] = bp;                                                                                                      \
 }
 
@@ -295,7 +295,7 @@ public:                                                                         
     binds->method_set_##m_ts##_vec = &m_class::set_##m_prop;                                                                            \
     binds->method_get_##m_ts##_vec = &m_class::get_##m_prop;                                                                            \
     _prop_binds.push_back(binds);                                                                                                       \
-    ByteProcessor bp = ByteProcessor<m_class>(binds, true);                                                                             \
+    ByteProcessor<m_class> bp(binds, true);                                                                                             \
     _byte_procs[_bound_slot] = bp;                                                                                                      \
 }
 
