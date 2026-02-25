@@ -64,9 +64,14 @@ private:
 
 public:
     inline PKTByteVector() { }
-    
     inline PKTByteVector(const size_type &p_size) {
         _data.reserve(p_size);
+    }
+
+    inline static PKTByteVector onebyte(const BYTE &p_Val) {
+        PKTByteVector ret;
+        ret.append(p_Val);
+        return ret;
     }
 
 public:
@@ -77,9 +82,23 @@ public:
         return c;
     }
 
+    inline BYTE pop_front() {
+        if (!size()) return 0;
+        BYTE v = _data[0];
+        _data.erase(_data.begin());
+        return v;
+    }
+
 public:
+    inline void clear() { _data.clear(); }
     inline size_type size() const { return _data.size(); }
     inline std::vector<BYTE> &data() { return _data; }
+    inline uint8_t *alloc_ptr() { return _data.data(); }
+
+    inline void resize(const size_type &p_size) { _data.resize(p_size); }
+    inline void reserve(const size_type &p_size) { _data.reserve(p_size); }
+
+public:
     inline BYTE &operator[](const size_type &p_idx) { return (BYTE &)_data[p_idx]; }
     inline const BYTE &at(const size_type &p_idx) { return (const BYTE &)_data.at(p_idx); }
 
@@ -119,8 +138,11 @@ public:
     inline PKTByteVector subv(const size_type &p_Begin, const size_type &p_End) const {
         PKTByteVector _Ret;
         size_type _Max = _data.size();
+        if (p_Begin == p_End) {
+            return _Ret;
+        }
         if (!VALIDATE_SUB_RANGE(p_Begin, p_End, _Max)) {
-            printf("ERROR: subv() bad range\n");
+            printf("ERROR: subv(%d, %d, _Max=%d) bad range\n", (int)p_Begin, (int)p_End, (int)_Max);
             return _Ret;
         }
         for (size_type _Idx=0; _Idx<p_End-p_Begin; _Idx++) {
@@ -142,12 +164,10 @@ public:
 protected:                                                                                                                              \
     static U8 _bound_slot;                                                                                                              \
     static std::vector<PropertyBinds<m_class> *> _prop_binds;                                                                           \
+    static std::vector<__PKT_SubBinds<m_class> *> _sub_binds;                                                                           \
     static std::map<U8, ByteProcessor<m_class>> _byte_procs;                                                                            \
     typedef std::unordered_map<U8, U16> Header_OffsetMap;                                                                               \
 public:                                                                                                                                 \
-    static std::string get_class_name() {                                                                                               \
-        return std::string(#m_class);                                                                                                   \
-    }                                                                                                                                   \
     static void bind_structure() {                                                                                                      \
         static bool initialized;                                                                                                        \
         if (!initialized) {                                                                                                             \
@@ -229,8 +249,8 @@ public:                                                                         
         Header_OffsetMap offsets = _deserialize_header(p_data);                                                                         \
         U64 _Max = p_data->size();                                                                                                      \
         U64 _Sep = p_data->find(PKT_HEADER_SECTION_DIVIDER);                                                                            \
-        PKTByteVector struct_data = p_data->subv(_Sep + 1, _Max);                                                                       \
         U16 byte_offset = 0;                                                                                                            \
+        PKTByteVector struct_data = p_data->subv(_Sep + 1, _Max);                                                                       \
         for (auto &_pair : _byte_procs) {                                                                                               \
             U16 var_len = 0;                                                                                                            \
             if (offsets.count(_pair.first)) {                                                                                           \
@@ -243,12 +263,122 @@ public:                                                                         
 private: // reset back to private field
 // PKT_STRUCT() end
 
+#define PKT_SUB(m_sub)\
+private:\
+    static U8 _bound_slot;\
+    static U16 _struct_length;\
+    static std::vector<PropertyBinds<m_sub> *> _prop_binds;\
+    static std::vector<__PKT_SubBinds<m_sub> *> _sub_binds;\
+    static std::map<U8, ByteProcessor<m_sub>> _byte_procs;\
+public:\
+    static void bind_structure() {\
+        static bool bound;\
+        if (!bound) {\
+            _bind_structure();\
+            bound = true;\
+        }\
+    }\
+    static void free_static() {\
+        for (int i = 0; i < _prop_binds.size(); i++) {\
+            delete _prop_binds[i];\
+        }\
+        _prop_binds.clear();\
+    }\
+public:\
+    static U16 struct_size_static() { return m_sub::_struct_length; }\
+    U16 struct_size() { return m_sub::_struct_length; }\
+    static void serialize(m_sub *p_obj, PKTByteVector *p_dest){\
+        for (const auto &_It : _byte_procs) {\
+            const ByteProcessor<m_sub> &_proc = _It.second;\
+            _proc.serialize_property(p_obj, p_dest);\
+        }\
+    }\
+    static void deserialize(PKTByteVector *p_data, m_sub *p_obj, U16 *p_byte_offset) {\
+        for (auto &_It : _byte_procs) {\
+            ByteProcessor<m_sub> &_proc = _It.second;\
+            _proc.deserialize_property(p_data, p_obj, p_byte_offset, 0);\
+        }\
+    }\
+private:
+// PKT_SUB() end
+
+#define PKT_SUB_BYTES(m_length)     _struct_length = m_length
+
+#define PKT_CREATE_SUBPACK_PROPERTY(m_class, m_sub, m_prop)                                                                             \
+private:                                                                                                                                \
+    PKT_CREATE_PROPERTY(m_sub, m_prop);                                                                                                 \
+    void __sub_serialize_##m_prop(PKTByteVector *p_dest) {                                                                              \
+        m_sub::serialize(&_prop_##m_prop, p_dest);                                                                                      \
+    }                                                                                                                                   \
+    void __sub_deserialize_##m_prop(PKTByteVector *p_data, U16 *p_byte_offset) {                                                        \
+        m_sub::deserialize(p_data, &_prop_##m_prop, p_byte_offset);                                                                     \
+    }                                                                                                                                   \
+
+#define PKT_CREATE_SUBPACK_PROPERTY_VEC(m_class, m_sub, m_prop)                                                                         \
+private:\
+    PKT_CREATE_PROPERTY_VEC(m_sub, m_prop##_vec);                                                                                       \
+    void __sub_serialize_##m_prop##_vec(PKTByteVector *p_dest) {\
+        for (m_sub &_Elem : _prop_##m_prop##_vec) {\
+            m_sub::serialize(&_Elem, p_dest);\
+        }\
+    }\
+    void __sub_deserialize_##m_prop##_vec(PKTByteVector *p_data, U16 *p_byte_offset, const U16 &p_var_len) {                            \
+        _prop_##m_prop##_vec.clear();\
+        U16 elem_size = m_sub::struct_size_static();\
+        U16 elem_count = p_var_len / elem_size;\
+        for (U16 i = 0; i < elem_count; i++) {\
+            m_sub v;\
+            m_sub::deserialize(p_data, &v, p_byte_offset);\
+            _prop_##m_prop##_vec.push_back(v);\
+        }\
+    }\
+    U16 __sub_##m_prop##_vec_element_count() const {\
+        return _prop_##m_prop##_vec.size();\
+    }\
+
+template<class _Struct>
+struct __PKT_SubBinds {
+    void (_Struct:: *method_serialize) (PKTByteVector *);
+    void (_Struct:: *method_deserialize) (PKTByteVector *, U16 *);
+    U16  (_Struct:: *method_vec_element_count) () const;
+    void (_Struct:: *method_serialize_vec) (PKTByteVector *);
+    void (_Struct:: *method_deserialize_vec) (PKTByteVector *, U16 *, const U16 &);
+};
+
+#define PKT_BIND_SUBPACK_PROPERTY(m_class, m_prop, m_size) {                                                                            \
+    __PKT_SubBinds<m_class> *binds = new __PKT_SubBinds<m_class>;                                                                       \
+    binds->method_serialize = &m_class::__sub_serialize_##m_prop;                                                                       \
+    binds->method_deserialize = &m_class::__sub_deserialize_##m_prop;                                                                   \
+    _sub_binds.push_back(binds);                                                                                                        \
+    ByteProcessor<m_class> bp = ByteProcessor<m_class>::subpack_proc(binds, m_size);                                                    \
+    _byte_procs[_bound_slot] = bp;                                                                                                      \
+}                                                                                                                                       \
+
+#define PKT_BIND_SUBPACK_PROPERTY_VEC(m_class, m_prop, m_elem_size) {                                                                   \
+    __PKT_SubBinds<m_class> *binds = new __PKT_SubBinds<m_class>;                                                                       \
+    binds->method_serialize_vec = &m_class::__sub_serialize_##m_prop##_vec;                                                             \
+    binds->method_deserialize_vec = &m_class::__sub_deserialize_##m_prop##_vec;                                                         \
+    binds->method_vec_element_count = &m_class::__sub_##m_prop##_vec_element_count;                                                     \
+    _sub_binds.push_back(binds);                                                                                                        \
+    ByteProcessor<m_class> bp = ByteProcessor<m_class>::subpack_proc(binds, m_elem_size, true);                                         \
+    _byte_procs[_bound_slot] = bp;                                                                                                      \
+}\
+
 // Static proc table allocation
 #define PKT_ALLOC_STATIC(m_class)                                                                                                       \
     class m_class;                                                                                                                      \
     U8 m_class::_bound_slot = 0;                                                                                                        \
     std::vector<PropertyBinds<m_class> *> m_class::_prop_binds = std::vector<PropertyBinds<m_class> *>();                               \
+    std::vector<__PKT_SubBinds<m_class> *> m_class::_sub_binds = std::vector<__PKT_SubBinds<m_class> *>();                              \
     std::map<U8, ByteProcessor<m_class>> m_class::_byte_procs = std::map<U8, ByteProcessor<m_class>>();                                 \
+
+#define PKT_SUB_ALLOC_STATIC(m_sub)                                                                                                     \
+    class m_sub;                                                                                                                        \
+    U8 m_sub::_bound_slot = 0;                                                                                                          \
+    U16 m_sub::_struct_length = 0;                                                                                                      \
+    std::vector<PropertyBinds<m_sub> *> m_sub::_prop_binds = std::vector<PropertyBinds<m_sub> *>();                                     \
+    std::vector<__PKT_SubBinds<m_sub> *> m_sub::_sub_binds = std::vector<__PKT_SubBinds<m_sub> *>();                                    \
+    std::map<U8, ByteProcessor<m_sub>> m_sub::_byte_procs = std::map<U8, ByteProcessor<m_sub>>();                                       \
 
 #define PKT_FREE_STATIC(m_class)        m_class::free_static()
 
@@ -260,6 +390,7 @@ private: // reset back to private field
 #define PKT_CREATE_PROPERTY(m_Type, m_Prop)                                                                                             \
     m_Type  _prop_##m_Prop;                                                                                                             \
     public: _PKT_CREATE_PROPERTY_METHODS(m_Type, m_Prop);                                                                               \
+    private:                                                                                                                            \
 
 #define PKT_CREATE_PROPERTY_D(m_Type, m_Prop, m_Def)                                                                                    \
     m_Type  _prop_##m_Prop = (m_Type)m_Def;                                                                                             \
@@ -270,6 +401,7 @@ private: // reset back to private field
 public:                                                                                                                                 \
     inline void set_##m_Prop(const POOLSTR &p_V) { _prop_##m_Prop = p_V; }                                                              \
     inline POOLSTR *get_##m_Prop() { return &_prop_##m_Prop; }                                                                          \
+
 
 #define PKT_CREATE_PROPERTY_VEC(m_Type, m_Prop)                                                                                         \
     std::vector<m_Type> _prop_##m_Prop = std::vector<m_Type>();                                                                         \
@@ -333,6 +465,7 @@ public:                                                                         
 template<class _Struct>
 struct PropertyBinds {
     U8 property_type;
+
 // setters
     void  (_Struct::     *method_set_byte) (const BYTE &);       // BYTE
     void  (_Struct::     *method_set_str)  (const STR &);          // STR
@@ -437,12 +570,24 @@ class ByteProcessor {
 
 private:
     bool _is_vec;
+    bool _is_sub;
+    U16  _sub_size;
     PropertyBinds<_Struct> *_prop_binds;
+    __PKT_SubBinds<_Struct> *_sub_binds;
 
 public:
     inline ByteProcessor() : _prop_binds(NULL) { }
     inline ByteProcessor(PropertyBinds<_Struct> *p_binds_ptr, bool p_is_vec = false)
-        : _prop_binds(p_binds_ptr), _is_vec(p_is_vec) { }
+        : _prop_binds(p_binds_ptr), _is_vec(p_is_vec), _is_sub(0) { }
+    
+    inline static ByteProcessor subpack_proc(__PKT_SubBinds<_Struct> *p_sub_binds, const U16 &p_size, bool p_is_vec = false) {
+        ByteProcessor bp;
+        bp._is_vec = p_is_vec;
+        bp._is_sub = true;
+        bp._sub_binds = p_sub_binds;
+        bp._sub_size = p_size;
+        return bp;
+    }
 
 public:
     inline U8 get_property_type() const {
@@ -451,14 +596,21 @@ public:
         }
         return _prop_binds->property_type;
     }
+
+    inline bool is_subpack_proc() const {
+        return _is_sub;
+    }
     
     inline bool is_alloc_variant() const {
-        if (!_prop_binds) {
-            return false;
-        }
-        if (_is_vec) {
+        
+        if (_is_sub && _is_vec)
             return true;
-        }
+        
+        if (!_prop_binds)
+            return false;
+        if (_is_vec)
+            return true;
+        
         switch (_prop_binds->property_type) {
             case TYPE_STR: {
                 return true;
@@ -474,6 +626,11 @@ public:
     }
 
     inline U16 get_vec_element_count(_Struct *p_obj) const {
+
+        if (_is_sub && _is_vec) {
+            return (p_obj->*(_sub_binds->method_vec_element_count))();
+        }
+
         if (!_prop_binds) {
             return 0;
         }
@@ -494,6 +651,9 @@ public:
     }
 
     inline U16 get_alloc_size(_Struct *p_obj) const {
+        if (_is_sub) {
+            return _sub_size;
+        }
         if (!_prop_binds) {
             return 0;
         }
@@ -586,6 +746,13 @@ public:
 
 public:
     inline void serialize_property(_Struct *p_obj, PKTByteVector *p_dest) const {
+        if (_is_sub) {
+            if (!_is_vec)
+                return (p_obj->*(_sub_binds->method_serialize))(p_dest);
+            else
+                return (p_obj->*(_sub_binds->method_serialize_vec))(p_dest);
+        }
+        
         if (!_prop_binds) {
             return;
         }
@@ -634,6 +801,13 @@ public:
     }
 
     inline void deserialize_property(PKTByteVector *p_data, _Struct *p_dest_obj, U16 *p_byte_offset, const U16 &p_var_len) {
+        if (_is_sub) {
+            if (!_is_vec)
+                return (p_dest_obj->*(_sub_binds->method_deserialize))(p_data, p_byte_offset);
+            else
+                return (p_dest_obj->*(_sub_binds->method_deserialize_vec))(p_data, p_byte_offset, p_var_len);
+        }
+        
         if (!_prop_binds || p_byte_offset == NULL) {
             return;
         }

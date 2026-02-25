@@ -14,6 +14,7 @@ int main(int argc, char **argv) {
     instance.set_c("Hello World!");
 
     PKTByteVector serialized_data = HelloWorld::serialize(&instance);
+    serialized_data.print_hex_table();
 
     HelloWorld instance_copy;
     HelloWorld::deserialize(&serialized_data, &instance_copy);
