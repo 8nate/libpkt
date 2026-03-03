@@ -89,6 +89,10 @@ public:
         return v;
     }
 
+    inline void insert_front(const BYTE &p_Val) {
+        _data.insert(_data.begin(), p_Val);
+    }
+
 public:
     inline void clear() { _data.clear(); }
     inline size_type size() const { return _data.size(); }
@@ -200,7 +204,9 @@ private:                                                                        
             }                                                                                                                           \
             else {                                                                                                                      \
                 if (proc.get_property_type() == TYPE_STR || proc.get_property_type() == TYPE_POOLSTR) {                                 \
-                    U16 alloc_end = byte_offset + alloc_size - 1;                                                                       \
+                    U16 alloc_end = byte_offset;\
+                    if (alloc_size > 0)\
+                        alloc_end += alloc_size - 1;\
                     PKTFormatConverter::pack_byte(slot, &_to);                                                                          \
                     PKTFormatConverter::pack_u16(alloc_end, &_to);                                                                      \
                 }                                                                                                                       \
@@ -306,13 +312,17 @@ private:
 
 #define PKT_CREATE_SUBPACK_PROPERTY(m_class, m_sub, m_prop)                                                                             \
 private:                                                                                                                                \
-    PKT_CREATE_PROPERTY(m_sub, m_prop);                                                                                                 \
+    m_sub _prop_##m_prop;\
+    inline const m_sub &get_##m_prop##_c() { return _prop_##m_prop; }\
     void __sub_serialize_##m_prop(PKTByteVector *p_dest) {                                                                              \
         m_sub::serialize(&_prop_##m_prop, p_dest);                                                                                      \
     }                                                                                                                                   \
     void __sub_deserialize_##m_prop(PKTByteVector *p_data, U16 *p_byte_offset) {                                                        \
         m_sub::deserialize(p_data, &_prop_##m_prop, p_byte_offset);                                                                     \
     }                                                                                                                                   \
+public:\
+    inline void set_##m_prop(const m_sub &p_V) { _prop_##m_prop = p_V; }\
+    inline m_sub &get_##m_prop() { return _prop_##m_prop; } \
 
 #define PKT_CREATE_SUBPACK_PROPERTY_VEC(m_class, m_sub, m_prop)                                                                         \
 private:\
@@ -396,7 +406,7 @@ struct __PKT_SubBinds {
     m_Type  _prop_##m_Prop = (m_Type)m_Def;                                                                                             \
     public: _PKT_CREATE_PROPERTY_METHODS(m_Type, m_Prop);                                                                               \
 
-#define PKT_CREATE_PROPERTY_POOLSTR(m_Prop)                                                                                             \
+#define PKT_CREATE_POOLSTR(m_Prop)                                                                                                      \
     POOLSTR _prop_##m_Prop = POOLSTR();                                                                                                 \
 public:                                                                                                                                 \
     inline void set_##m_Prop(const POOLSTR &p_V) { _prop_##m_Prop = p_V; }                                                              \
